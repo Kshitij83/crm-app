@@ -58,6 +58,8 @@ model Order {
   @@map("orders")
 }
 
+// Keeping this model for backward compatibility during transition
+// Will be removed in a future update
 model Segment {
   id        String   @id @default(cuid())
   name      String
@@ -68,14 +70,16 @@ model Segment {
 
   // Relations
   creator   User       @relation(fields: [createdBy], references: [id], onDelete: Cascade)
-  campaigns Campaign[]
+  campaigns Campaign[] @relation("LegacySegmentCampaigns")
 
   @@map("segments")
 }
 
 model Campaign {
   id          String   @id @default(cuid())
-  segmentId   String
+  segmentId   String?  // Optional for backward compatibility
+  segmentName String?  // New field for embedded segment info
+  segmentRules Json?   // New field for embedded segment rules
   messageText String
   status      String   @default("draft") // draft, sent, failed
   createdBy   String
@@ -83,7 +87,7 @@ model Campaign {
   updatedAt   DateTime @updatedAt
 
   // Relations
-  segment           Segment            @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  segment           Segment?           @relation("LegacySegmentCampaigns", fields: [segmentId], references: [id], onDelete: SetNull)
   creator           User               @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   communicationLogs CommunicationLog[]
 

@@ -19,7 +19,6 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Customers', href: '/dashboard/customers', icon: Users },
   { name: 'Orders', href: '/dashboard/orders', icon: ShoppingCart },
-  { name: 'Segments', href: '/dashboard/segments', icon: Target },
   { name: 'Campaigns', href: '/dashboard/campaigns', icon: Megaphone },
   { name: 'Settings', href: '/dashboard/settings', icon: Settings },
 ]

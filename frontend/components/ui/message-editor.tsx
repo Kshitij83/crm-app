@@ -8,6 +8,8 @@ import { Label } from '@/components/ui/label'
 import { Sparkles, SendHorizontal, Calendar, Clock } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
+import api from '@/lib/api'
+import toast from 'react-hot-toast'
 
 // Inline Textarea component to avoid import issues
 const Textarea = React.forwardRef<
@@ -28,6 +30,7 @@ const Textarea = React.forwardRef<
 Textarea.displayName = "Textarea"
 
 interface MessageEditorProps {
+  segmentId?: string;
   onSave: (data: {
     subject: string;
     message: string;
@@ -37,7 +40,7 @@ interface MessageEditorProps {
   onAiSuggest: () => void;
 }
 
-export function MessageEditor({ onSave, onAiSuggest }: MessageEditorProps) {
+export function MessageEditor({ segmentId, onSave, onAiSuggest }: MessageEditorProps) {
   const [subject, setSubject] = useState('')
   const [message, setMessage] = useState('')
   const [sendDate, setSendDate] = useState('')
@@ -45,39 +48,104 @@ export function MessageEditor({ onSave, onAiSuggest }: MessageEditorProps) {
   const [aiMode, setAiMode] = useState(false)
   const [aiPrompt, setAiPrompt] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
   
-  const handleAiGenerate = () => {
+  const handleAiGenerate = async () => {
     if (!aiPrompt) return
     
     setIsGenerating(true)
     
-    // Simulate AI generation
-    setTimeout(() => {
-      // Example AI generated content
-      setSubject('Special Offer for Valued Customers')
-      setMessage(`Hi {customer.firstName},
-
-We noticed you've been with us for {customer.loyaltyYears} years now, and we wanted to thank you for your continued support.
-
-As a token of our appreciation, we're offering you a special 15% discount on your next purchase. Use code THANKS15 at checkout.
-
-This offer is exclusive to our most valued customers like you and expires in 7 days.
-
-Best regards,
-The NexFluent Team`)
+    try {
+      // Extract objective and target audience from the prompt
+      const promptLines = aiPrompt.split('\n').filter(line => line.trim() !== '')
+      const objective = promptLines[0] || aiPrompt
+      const targetAudience = promptLines.length > 1 ? promptLines[1] : 'customers'
       
+      // Determine tone based on prompt keywords
+      let tone: 'professional' | 'casual' | 'friendly' | 'urgent' = 'professional'
+      
+      if (aiPrompt.toLowerCase().includes('urgent') || 
+          aiPrompt.toLowerCase().includes('limited time') || 
+          aiPrompt.toLowerCase().includes('hurry')) {
+        tone = 'urgent'
+      } else if (aiPrompt.toLowerCase().includes('casual') || 
+                aiPrompt.toLowerCase().includes('relaxed')) {
+        tone = 'casual'
+      } else if (aiPrompt.toLowerCase().includes('friendly') || 
+                aiPrompt.toLowerCase().includes('warm')) {
+        tone = 'friendly'
+      }
+      
+      // Call the API
+      const response = await api.getMessageSuggestions({
+        objective,
+        targetAudience,
+        tone,
+        maxLength: 300
+      })
+      
+      const { suggestions } = response;
+      
+      if (suggestions && suggestions.length > 0) {
+        // Parse the first suggestion to extract subject and body
+        const messageParts = suggestions[0].split('\n')
+        let extractedSubject = ''
+        let extractedBody = ''
+        
+        if (messageParts.length > 0) {
+          // Try to extract subject from the first line
+          if (messageParts[0].toLowerCase().startsWith('subject:')) {
+            extractedSubject = messageParts[0].substring(8).trim()
+            extractedBody = messageParts.slice(1).join('\n').trim()
+          } else {
+            // Use the first line as subject and the rest as body
+            extractedSubject = messageParts[0]
+            extractedBody = messageParts.slice(1).join('\n').trim()
+          }
+          
+          setSubject(extractedSubject)
+          setMessage(extractedBody || suggestions[0])
+        } else {
+          setMessage(suggestions[0])
+        }
+        
+        toast.success('AI generated message successfully!')
+      } else {
+        toast.error('No suggestions were generated. Please try a different prompt.')
+      }
+    } catch (error) {
+      console.error('Error generating AI message:', error)
+      
+      // Check if it's a quota error
+      if (error instanceof Error && 
+          (error.message.includes('quota') || 
+           error.message.includes('429') || 
+           error.message.includes('insufficient'))) {
+        toast.error('AI API quota exceeded. Using fallback responses.')
+      } else {
+        toast.error('Failed to generate AI message. Please try again.')
+      }
+    } finally {
       setIsGenerating(false)
       setAiMode(false)
-    }, 1500)
+    }
   }
   
   const handleSave = () => {
+    setIsSaving(true)
+    
+    // Combine subject and message for API call
+    const fullMessage = `Subject: ${subject}\n\n${message}`
+    
+    // Call onSave with the data
     onSave({
       subject,
       message,
       sendDate,
       sendTime
     })
+    
+    setIsSaving(false)
   }
   
   if (aiMode) {
@@ -198,10 +266,10 @@ The NexFluent Team`)
       <div className="flex justify-end mt-4">
         <Button
           onClick={handleSave}
-          disabled={!subject || !message}
+          disabled={!subject || !message || isSaving}
           className="flex items-center"
         >
-          Save Campaign <SendHorizontal className="ml-2 h-4 w-4" />
+          {isSaving ? 'Saving...' : 'Save Campaign'} <SendHorizontal className="ml-2 h-4 w-4" />
         </Button>
       </div>
     </div>

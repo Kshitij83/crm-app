@@ -124,9 +124,37 @@ export function RuleBuilder({
     const updateRules = (group: RuleGroup): RuleGroup => {
       return {
         ...group,
-        rules: group.rules.map(rule => 
-          rule.id === ruleId ? { ...rule, ...updatedRule } : rule
-        ),
+        rules: group.rules.map(rule => {
+          // Find the current rule
+          if (rule.id === ruleId) {
+            // If we're updating the value and the field is a number type
+            if ('value' in updatedRule && updatedRule.value !== undefined) {
+              const fieldOption = availableFields.find(f => f.id === (updatedRule.field || rule.field));
+              const fieldType = fieldOption?.type || 'text';
+              
+              // For number fields, validate that the input is numeric
+              if (fieldType === 'number') {
+                // Only sanitize if the value contains invalid characters
+                if (updatedRule.value !== '' && !/^[0-9]*\.?[0-9]*$/.test(updatedRule.value)) {
+                  // Allow empty value or a valid number (including decimal)
+                  // Remove any non-numeric characters except for decimal point
+                  const sanitizedValue = updatedRule.value.replace(/[^0-9.]/g, '');
+                  
+                  // Prevent multiple decimal points
+                  const parts = sanitizedValue.split('.');
+                  if (parts.length > 2) {
+                    updatedRule.value = parts[0] + '.' + parts.slice(1).join('');
+                  } else {
+                    updatedRule.value = sanitizedValue;
+                  }
+                }
+              }
+            }
+            
+            return { ...rule, ...updatedRule };
+          }
+          return rule;
+        }),
         groups: group.groups.map(g => updateRules(g))
       }
     }
@@ -318,7 +346,9 @@ export function RuleBuilder({
             </select>
           ) : (
             <Input
-              type={fieldType === 'number' ? 'number' : fieldType === 'date' ? 'date' : 'text'}
+              key={`${rule.id}-${rule.field}-input`}
+              type={fieldType === 'date' ? 'date' : 'text'}
+              inputMode={fieldType === 'number' ? 'numeric' : undefined}
               value={rule.value}
               onChange={(e) => handleRuleChange(rule.id, { value: e.target.value })}
               className="w-full border border-gray-300 dark:border-gray-700 rounded-md px-3 py-1 text-sm"

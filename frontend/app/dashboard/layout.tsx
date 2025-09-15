@@ -1,4 +1,5 @@
 import { Header } from '@/components/layout/header'
+import { ApiQuotaAlert } from '@/components/ui/api-quota-alert'
 
 export default function DashboardLayout({
   children,
@@ -13,6 +14,7 @@ export default function DashboardLayout({
           {children}
         </div>
       </main>
+      <ApiQuotaAlert />
     </div>
   )
 }
