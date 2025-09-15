@@ -1,0 +1,107 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  password     String?  // Optional to support both oauth and password auth
+  authProvider String   @default("local") // "local", "google", etc.
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  segments     Segment[]
+  campaigns    Campaign[]
+
+  @@map("users")
+}
+
+model Customer {
+  id             String    @id @default(cuid())
+  name           String
+  email          String    @unique
+  phone          String?
+  totalSpend     Float     @default(0)
+  visits         Int       @default(0)
+  lastActiveDate DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  // Relations
+  orders           Order[]
+  communicationLogs CommunicationLog[]
+
+  @@map("customers")
+}
+
+model Order {
+  id           String   @id @default(cuid())
+  customerId   String
+  orderAmount  Float
+  orderDate    DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("orders")
+}
+
+model Segment {
+  id        String   @id @default(cuid())
+  name      String
+  rules     Json     // Store dynamic rule logic as JSON
+  createdBy String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  creator   User       @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@map("segments")
+}
+
+model Campaign {
+  id          String   @id @default(cuid())
+  segmentId   String
+  messageText String
+  status      String   @default("draft") // draft, sent, failed
+  createdBy   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  segment           Segment            @relation(fields: [segmentId], references: [id], onDelete: Cascade)
+  creator           User               @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  communicationLogs CommunicationLog[]
+
+  @@map("campaigns")
+}
+
+model CommunicationLog {
+  id         String   @id @default(cuid())
+  campaignId String
+  customerId String
+  status     String   // SENT, FAILED, PENDING
+  sentAt     DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  // Relations
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@map("communication_logs")
+}
+

@@ -1,0 +1,11 @@
+name,email,phone,address,notes
+John Smith,john.smith@example.com,+1-555-123-4567,"123 Main St, Anytown, USA","Regular customer, prefers email contact"
+Jane Doe,jane.doe@example.com,+1-555-987-6543,"456 Oak Ave, Somewhere, USA","VIP customer, high-value orders"
+Robert Johnson,robert.j@example.com,+1-555-456-7890,"789 Pine Rd, Nowhere, USA","New customer, found us through Google"
+Emily Brown,emily.brown@example.com,+1-555-222-3333,"101 Elm St, Anytown, USA","Prefers phone contact, has special delivery instructions"
+Michael Williams,michael.w@example.com,+1-555-444-5555,"202 Maple Dr, Somewhere, USA","Wholesale client, bulk orders only"
+Sarah Miller,sarah.m@example.com,+1-555-666-7777,"303 Cedar Ln, Nowhere, USA","Seasonal buyer, active during holidays"
+David Garcia,david.g@example.com,+1-555-888-9999,"404 Birch Ct, Anytown, USA","International shipping required"
+Jessica Rodriguez,jessica.r@example.com,+1-555-111-2222,"505 Spruce Way, Somewhere, USA","Referred by John Smith"
+Thomas Wilson,thomas.w@example.com,+1-555-333-4444,"606 Fir Blvd, Nowhere, USA","Corporate account, invoicing required"
+Jennifer Martinez,jennifer.m@example.com,+1-555-555-6666,"707 Pine St, Anytown, USA","Returns frequent items"

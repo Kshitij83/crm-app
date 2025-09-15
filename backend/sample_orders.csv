@@ -1,0 +1,16 @@
+customerEmail,amount,status,productName,quantity,orderDate
+john.smith@example.com,199.99,completed,Premium Widget,2,2025-08-15
+jane.doe@example.com,599.99,processing,Deluxe Package,1,2025-09-01
+robert.j@example.com,49.99,completed,Basic Service,1,2025-08-20
+emily.brown@example.com,149.99,shipped,Standard Widget,3,2025-08-25
+michael.w@example.com,999.99,processing,Wholesale Bundle,10,2025-09-02
+sarah.m@example.com,79.99,completed,Holiday Special,2,2025-08-10
+david.g@example.com,249.99,processing,International Package,1,2025-09-03
+jessica.r@example.com,129.99,shipped,Referral Bundle,2,2025-08-28
+thomas.w@example.com,1999.99,invoiced,Corporate Plan,5,2025-09-05
+jennifer.m@example.com,89.99,returned,Standard Widget,1,2025-08-18
+john.smith@example.com,29.99,completed,Add-on Service,1,2025-08-22
+jane.doe@example.com,799.99,processing,Premium Package,1,2025-09-07
+robert.j@example.com,99.99,completed,Extended Service,2,2025-08-30
+emily.brown@example.com,199.99,pending,Deluxe Widget,4,2025-09-10
+michael.w@example.com,1499.99,processing,Bulk Order,20,2025-09-08
