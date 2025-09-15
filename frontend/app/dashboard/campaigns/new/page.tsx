@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -15,21 +15,208 @@ import {
   Check,
   FileSpreadsheet,
   Globe,
-  Users
+  Users,
+  Target,
+  Sparkles
 } from 'lucide-react'
 import Link from 'next/link'
 import { Progress } from '@/components/ui/progress'
 import { Badge } from '@/components/ui/badge'
-import { RuleBuilder } from '@/components/ui/rule-builder'
+import { RuleBuilder, RuleGroup } from '@/components/ui/rule-builder'
 import { MessageEditor } from '@/components/ui/message-editor'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import api from '@/lib/api'
+import toast from 'react-hot-toast'
+import { cn } from '@/lib/utils'
+import * as React from 'react'
+
+// Inline Textarea component
+const Textarea = React.forwardRef<
+  HTMLTextAreaElement, 
+  React.TextareaHTMLAttributes<HTMLTextAreaElement>
+>(({ className, ...props }, ref) => {
+  return (
+    <textarea
+      className={cn(
+        "flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50",
+        className
+      )}
+      ref={ref}
+      {...props}
+    />
+  )
+})
+Textarea.displayName = "Textarea"
 
 export default function NewCampaignPage() {
   const router = useRouter()
+  const queryClient = useQueryClient()
   const [currentStep, setCurrentStep] = useState(1)
   const [importMethod, setImportMethod] = useState<'csv' | 'api' | 'manual' | ''>('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(0)
+  const [selectedSegmentId, setSelectedSegmentId] = useState<string>('')
+  
+  // Segment creation state
+  const [segmentName, setSegmentName] = useState('')
+  const [aiDescription, setAiDescription] = useState('')
+  const [isGeneratingRules, setIsGeneratingRules] = useState(false)
+  const [ruleGroup, setRuleGroup] = useState<RuleGroup>({
+    id: 'root',
+    logicalOperator: 'and',
+    rules: [],
+    groups: []
+  })
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewData, setPreviewData] = useState<{
+    totalCustomers: number;
+    customers: any[];
+  } | null>(null)
+  const [previewTimer, setPreviewTimer] = useState<NodeJS.Timeout | null>(null)
+
+  // Fetch segments (for backward compatibility, will remove later)
+  const { data: segmentsData, isLoading: isLoadingSegments } = useQuery({
+    queryKey: ['segments'],
+    queryFn: () => api.getSegments({ limit: 100 }),
+    enabled: false, // Disabled as we're not using existing segments anymore
+  })
+
+  // Load saved segment data when the component mounts
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedSegmentName = localStorage.getItem('campaign_segment_name');
+      const savedSegmentRules = localStorage.getItem('campaign_segment_rules');
+      
+      if (savedSegmentName) {
+        setSegmentName(savedSegmentName);
+      }
+      
+      if (savedSegmentRules) {
+        try {
+          // This is just to check if the rules are valid JSON
+          JSON.parse(savedSegmentRules);
+        } catch (error) {
+          console.error('Error parsing saved rules:', error);
+        }
+      }
+    }
+  }, []);
+
+  // Create campaign mutation
+  const createCampaignMutation = useMutation({
+    mutationFn: (data: { 
+      segmentName: string;
+      segmentRules: any;
+      messageText: string;
+    }) => api.createCampaign(data),
+    onSuccess: (data) => {
+      toast.success('Campaign created successfully!')
+      if (data.delivery) {
+        toast.success(`Campaign sent to ${data.delivery.totalCustomers} customers with ${data.delivery.successRate.toFixed(1)}% success rate`)
+      }
+      queryClient.invalidateQueries({ queryKey: ['campaigns'] })
+      router.push('/dashboard/campaigns')
+    },
+    onError: (error: any) => {
+      toast.error(`Failed to create campaign: ${error?.message || 'Unknown error'}`)
+      console.error('Campaign creation error:', error)
+    }
+  })
+  
+  // Parse rules mutation for AI generation
+  const parseRulesMutation = useMutation({
+    mutationFn: (description: string) => api.parseRules(description),
+    onSuccess: (data) => {
+      try {
+        const apiRules = data.rules;
+        
+        // Create a new RuleGroup based on the API response
+        const newRuleGroup: RuleGroup = {
+          id: 'root',
+          logicalOperator: apiRules.operator.toLowerCase() as 'and' | 'or',
+          rules: apiRules.rules.map((r: any, idx: number) => ({
+            id: `rule-${Date.now()}-${idx}`,
+            field: r.field,
+            operator: mapApiOperatorToRuleBuilder(r.operator),
+            value: r.value || ''
+          })),
+          groups: []
+        };
+        
+        setRuleGroup(newRuleGroup);
+        setIsGeneratingRules(false);
+        
+        // Show success toast
+        toast.success('Rules generated successfully');
+        
+        // Trigger preview update
+        previewRulesMutation.mutate(apiRules);
+      } catch (error) {
+        console.error('Error mapping API rules:', error);
+        toast.error('Failed to process generated rules');
+        setIsGeneratingRules(false);
+      }
+    },
+    onError: (error: any) => {
+      setIsGeneratingRules(false);
+      
+      // Check if it's a quota error
+      if (error.message && (
+          error.message.includes('quota') || 
+          error.message.includes('429') || 
+          error.message.includes('insufficient'))) {
+        toast.error('AI API quota exceeded. Please try again later or create rules manually.');
+      } else {
+        toast.error('Failed to generate rules from description: ' + (error.message || 'Unknown error'));
+      }
+    },
+  })
+
+  // Preview rules mutation
+  const previewRulesMutation = useMutation({
+    mutationFn: (rules: any) => api.previewRules(rules),
+    onSuccess: (data) => {
+      setPreviewData(data)
+      setPreviewLoading(false)
+    },
+    onError: () => {
+      setPreviewLoading(false)
+      toast.error('Failed to preview segment')
+    },
+  })
+
+  // Helper functions to map between operator formats
+  function mapApiOperatorToRuleBuilder(apiOperator: string): string {
+    const operatorMap: Record<string, string> = {
+      '>': 'greater_than',
+      '<': 'less_than',
+      '=': 'equals',
+      '>=': 'greater_than',
+      '<=': 'less_than',
+      'contains': 'contains',
+      'not_contains': 'not_contains',
+      'is_null': 'equals',
+      'is_not_null': 'not_equals'
+    };
+    
+    return operatorMap[apiOperator] || apiOperator;
+  }
+
+  function mapRuleBuilderToApiOperator(ruleBuilderOperator: string): string {
+    const operatorMap: Record<string, string> = {
+      'greater_than': '>',
+      'less_than': '<',
+      'equals': '=',
+      'not_equals': '!=',
+      'contains': 'contains',
+      'not_contains': 'not_contains',
+      'starts_with': 'starts_with',
+      'ends_with': 'ends_with'
+    };
+    
+    return operatorMap[ruleBuilderOperator] || ruleBuilderOperator;
+  }
 
   const totalSteps = 3
   const progress = (currentStep / totalSteps) * 100
@@ -55,6 +242,7 @@ export default function NewCampaignPage() {
           clearInterval(interval)
           setIsUploading(false)
           // Move to next step after upload
+          toast.success(`Successfully uploaded ${selectedFile.name}`)
           setTimeout(() => setCurrentStep(2), 500)
           return 100
         }
@@ -73,6 +261,92 @@ export default function NewCampaignPage() {
     if (currentStep > 1) {
       setCurrentStep(currentStep - 1)
     }
+  }
+
+  // Function to convert the RuleBuilder format to API format
+  function convertRuleGroupToApiFormat(group: RuleGroup): any {
+    // Map the logical operator
+    const operator = group.logicalOperator.toUpperCase();
+    
+    // Map the rules
+    const rules = group.rules.map(rule => ({
+      field: rule.field,
+      operator: mapRuleBuilderToApiOperator(rule.operator),
+      value: rule.value
+    }));
+    
+    // Handle nested groups recursively
+    if (group.groups.length > 0) {
+      for (const nestedGroup of group.groups) {
+        const nestedRules = convertRuleGroupToApiFormat(nestedGroup);
+        rules.push({
+          field: 'nestedGroup',
+          operator: nestedRules.operator,
+          value: JSON.stringify(nestedRules.rules)
+        });
+      }
+    }
+    
+    return {
+      operator,
+      rules
+    };
+  }
+  
+  // Handler for AI rule generation
+  const handleGenerateRules = () => {
+    if (!aiDescription.trim()) {
+      toast.error('Please enter a description')
+      return
+    }
+    setIsGeneratingRules(true)
+    parseRulesMutation.mutate(aiDescription)
+  }
+
+  // Handler for rule changes
+  const handleRuleChange = (updatedRuleGroup: RuleGroup) => {
+    setRuleGroup(updatedRuleGroup);
+    
+    // Trigger preview update with delay
+    if (previewTimer) {
+      clearTimeout(previewTimer);
+    }
+    
+    setPreviewLoading(true);
+    
+    const timer = setTimeout(() => {
+      const apiRules = convertRuleGroupToApiFormat(updatedRuleGroup);
+      previewRulesMutation.mutate(apiRules);
+    }, 1000);
+    
+    setPreviewTimer(timer);
+  };
+
+  // Handler for segment submission
+  const handleSubmit = () => {
+    if (!segmentName.trim()) {
+      toast.error('Please enter a segment name')
+      return
+    }
+
+    if (ruleGroup.rules.length === 0 && ruleGroup.groups.length === 0) {
+      toast.error('Please add at least one rule')
+      return
+    }
+    
+    // Store the segment information in browser storage to persist between steps
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('campaign_segment_name', segmentName);
+      localStorage.setItem('campaign_segment_rules', JSON.stringify(convertRuleGroupToApiFormat(ruleGroup)));
+    }
+    
+    // Go to next step
+    goToNextStep();
+  }
+  
+  // Handler for saving segment and continuing
+  const handleSaveAndContinue = () => {
+    handleSubmit();
   }
 
   const renderStepContent = () => {
@@ -210,7 +484,10 @@ export default function NewCampaignPage() {
                         <Label htmlFor="api-key">API Key (if required)</Label>
                         <Input id="api-key" type="password" placeholder="Your API key" />
                       </div>
-                      <Button className="w-full" onClick={goToNextStep}>
+                      <Button className="w-full" onClick={() => {
+                        toast.success('Successfully connected to API')
+                        goToNextStep()
+                      }}>
                         Connect & Continue
                       </Button>
                     </div>
@@ -223,7 +500,10 @@ export default function NewCampaignPage() {
                     <p className="text-sm text-gray-600 dark:text-gray-300 mb-4">
                       You have <span className="font-bold">247</span> customers in your database that can be used for segmentation.
                     </p>
-                    <Button className="w-full" onClick={goToNextStep}>
+                    <Button className="w-full" onClick={() => {
+                      toast.success('Using existing customer data')
+                      goToNextStep()
+                    }}>
                       Use Existing Data & Continue
                     </Button>
                   </div>
@@ -240,18 +520,166 @@ export default function NewCampaignPage() {
               <CardHeader>
                 <CardTitle>Create Your Segment</CardTitle>
                 <CardDescription>
-                  Define rules to segment your audience
+                  Define rules to target specific customers for this campaign
                 </CardDescription>
               </CardHeader>
               <CardContent>
-                <RuleBuilder 
-                  onSave={() => goToNextStep()}
-                  onAiSuggest={(description) => {
-                    // In a real app, this would call the API to generate rules based on the description
-                    alert(`AI would generate rules based on: ${description}`);
-                    goToNextStep();
-                  }}
-                />
+                <div className="mb-4">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={goToPreviousStep}
+                    className="flex items-center"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Back to Import
+                  </Button>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+                  {/* Main Form */}
+                  <div className="lg:col-span-2 space-y-6">
+                    {/* Basic Info */}
+                      <div>
+                        <Label htmlFor="segment-name">Segment Name</Label>
+                        <Input
+                          id="segment-name"
+                          value={segmentName}
+                          onChange={(e) => setSegmentName(e.target.value)}
+                          placeholder="e.g., High Value Customers"
+                          className="mb-4"
+                        />
+                      </div>
+
+                      {/* AI Rule Generation */}
+                      <div className="space-y-4">
+                        <div>
+                          <Label htmlFor="ai-description" className="flex items-center">
+                            <Sparkles className="h-4 w-4 mr-1 text-purple-500" />
+                            AI-Powered Rule Generation
+                          </Label>
+                          <Textarea
+                            id="ai-description"
+                            value={aiDescription}
+                            onChange={(e) => setAiDescription(e.target.value)}
+                            placeholder="e.g., customers who spent more than $2000 and haven't been active for 30 days"
+                            className="min-h-[80px]"
+                          />
+                        </div>
+                        <Button
+                          onClick={handleGenerateRules}
+                          disabled={isGeneratingRules || !aiDescription.trim()}
+                          className="w-full"
+                        >
+                          {isGeneratingRules ? (
+                            <>
+                              <Sparkles className="mr-2 h-4 w-4 animate-spin" />
+                              Generating Rules...
+                            </>
+                          ) : (
+                            <>
+                              <Sparkles className="mr-2 h-4 w-4" />
+                              Generate Rules with AI
+                            </>
+                          )}
+                        </Button>
+                      </div>                    {/* Manual Rules */}
+                    <div className="space-y-4">
+                      <Label>Segment Rules</Label>
+                      <RuleBuilder 
+                        initialRuleGroup={ruleGroup}
+                        onChange={handleRuleChange}
+                        onSave={handleSubmit}
+                        onAiSuggest={(description) => {
+                          setAiDescription(description);
+                          handleGenerateRules();
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Preview */}
+                  <div className="space-y-6">
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="flex items-center">
+                          <Users className="h-5 w-5 mr-2 text-blue-500" />
+                          Preview
+                        </CardTitle>
+                        <CardDescription>
+                          See how many customers match your rules
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <div className="text-center py-6">
+                          {previewLoading ? (
+                            <div className="flex flex-col items-center">
+                              <div className="h-12 w-12 rounded-full border-4 border-blue-200 border-t-blue-500 animate-spin mb-4"></div>
+                              <p className="text-gray-500">Calculating audience size...</p>
+                            </div>
+                          ) : ruleGroup.rules.length === 0 && ruleGroup.groups.length === 0 ? (
+                            <>
+                              <Target className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                              <p className="text-gray-500">Add rules to see preview</p>
+                            </>
+                          ) : previewData ? (
+                            <div className="space-y-4">
+                              <div className="h-20 w-20 mx-auto rounded-full flex items-center justify-center border-4 border-blue-100 bg-blue-50 mb-4">
+                                <span className="text-blue-600 text-xl font-bold">{previewData.totalCustomers}</span>
+                              </div>
+                              <p className="text-gray-700 font-medium">
+                                {previewData.totalCustomers === 0 
+                                  ? "No customers match these criteria"
+                                  : previewData.totalCustomers === 1
+                                  ? "1 customer matches these criteria"
+                                  : `${previewData.totalCustomers} customers match these criteria`}
+                              </p>
+                              {previewData.totalCustomers > 0 && (
+                                <div className="mt-4 text-xs text-gray-500">
+                                  <p>Sample matches:</p>
+                                  <ul className="mt-2 text-left">
+                                    {previewData.customers.slice(0, 3).map((customer, index) => (
+                                      <li key={index} className="border-b border-gray-100 py-1">
+                                        {customer.name} ({customer.email})
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <>
+                              <Target className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                              <p className="text-gray-500">Waiting for preview...</p>
+                            </>
+                          )}
+                        </div>
+                      </CardContent>
+                    </Card>
+
+                    {/* Actions */}
+                    <Card>
+                      <CardContent className="p-6">
+                        <div className="space-y-4">
+                          <Button
+                            onClick={handleSaveAndContinue}
+                            disabled={!segmentName.trim() || (ruleGroup.rules.length === 0 && ruleGroup.groups.length === 0)}
+                            className="w-full"
+                          >
+                            Save Segment & Continue
+                          </Button>
+                          <Button
+                            variant="outline"
+                            onClick={goToPreviousStep}
+                            className="w-full"
+                          >
+                            Back
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -268,11 +696,57 @@ export default function NewCampaignPage() {
                 </CardDescription>
               </CardHeader>
               <CardContent>
+                <div className="mb-4">
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={goToPreviousStep}
+                    className="flex items-center"
+                  >
+                    <ArrowLeft className="h-4 w-4 mr-2" />
+                    Back to Segment
+                  </Button>
+                </div>
                 <MessageEditor 
+                  segmentId={selectedSegmentId}
                   onSave={(data) => {
-                    // In a real app, this would save the campaign
-                    console.log('Campaign data:', data);
-                    router.push('/dashboard/campaigns');
+                    // Combine subject and message for the API call
+                    let messageText = `Subject: ${data.subject}\n\n${data.message}`
+                    
+                    // Add scheduled date/time if provided
+                    if (data.sendDate && data.sendTime) {
+                      const scheduledDateTime = `${data.sendDate}T${data.sendTime}:00Z`
+                      messageText += `\n\nScheduled for: ${scheduledDateTime}`
+                    }
+                    
+                    // Get the saved segment data from localStorage
+                    const savedSegmentName = localStorage.getItem('campaign_segment_name') || segmentName;
+                    const savedSegmentRules = localStorage.getItem('campaign_segment_rules');
+                    
+                    if (!savedSegmentName) {
+                      toast.error('No segment name found. Please go back and create a segment.')
+                      return;
+                    }
+                    
+                    if (!savedSegmentRules) {
+                      toast.error('No segment rules found. Please go back and create segment rules.')
+                      return;
+                    }
+                    
+                    try {
+                      // Parse the rules from localStorage
+                      const parsedRules = JSON.parse(savedSegmentRules);
+                      
+                      // Call API to create campaign with embedded segment data
+                      createCampaignMutation.mutate({
+                        segmentName: savedSegmentName,
+                        segmentRules: parsedRules,
+                        messageText
+                      });
+                    } catch (error) {
+                      console.error('Error parsing saved rules:', error);
+                      toast.error('Error with segment rules. Please go back and recreate the segment.');
+                    }
                   }}
                   onAiSuggest={() => {
                     // This is handled inside the MessageEditor component
@@ -310,7 +784,6 @@ export default function NewCampaignPage() {
       <div className="space-y-2">
         <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
           <span>Step {currentStep} of {totalSteps}</span>
-          <span>{Math.round(progress)}% Complete</span>
         </div>
         <Progress value={progress} className="h-2" />
         

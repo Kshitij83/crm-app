@@ -4,7 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { validateRequest, paginationSchema } from '../middleware/validation';
 import { asyncHandler, createError } from '../middleware/errorHandler';
 import { authenticateToken, AuthRequest } from '../middleware/auth';
-import { OpenAIService } from '../services/openaiService';
+import { GeminiService } from '../services/geminiService';
 // Temporarily commenting out Kafka integration
 // import { publishMessage } from '../services/kafkaService';
 import { setCache, getCache, deleteCache, invalidatePattern } from '../services/redisService';
@@ -15,8 +15,16 @@ const prisma = new PrismaClient();
 // Validation schemas
 const createCampaignSchema = z.object({
   body: z.object({
-    segmentId: z.string().min(1, 'Segment ID is required'),
+    // Support both direct segment data or segment ID reference
+    segmentId: z.string().optional(),
+    segmentName: z.string().optional(),
+    segmentRules: z.any().optional(),
     messageText: z.string().min(1, 'Message text is required'),
+  }).refine(data => {
+    // Either segmentId OR (segmentName AND segmentRules) must be provided
+    return (!!data.segmentId) || (!!data.segmentName && !!data.segmentRules);
+  }, {
+    message: 'Either segmentId OR both segmentName and segmentRules must be provided',
   }),
 });
 
@@ -75,34 +83,60 @@ router.post(
       throw createError('Authentication required', 401);
     }
 
-    const { segmentId, messageText } = req.body;
+    const { segmentId, segmentName, segmentRules, messageText } = req.body;
+    
+    let segmentRulesToApply;
+    let campaign;
+    
+    // Handle both types of requests (using existing segment or creating embedded segment)
+    if (segmentId) {
+      // Verify segment exists and belongs to the user (legacy flow)
+      const segment = await prisma.segment.findFirst({
+        where: { 
+          id: segmentId,
+          createdBy: req.user.id 
+        },
+      });
 
-    // Verify segment exists and belongs to the user
-    const segment = await prisma.segment.findFirst({
-      where: { 
-        id: segmentId,
-        createdBy: req.user.id 
-      },
-    });
+      if (!segment) {
+        return res.status(404).json({
+          error: 'Segment not found or not owned by you',
+        });
+      }
 
-    if (!segment) {
-      return res.status(404).json({
-        error: 'Segment not found or not owned by you',
+      segmentRulesToApply = segment.rules as any;
+      
+      // Create campaign with segmentId reference
+      campaign = await prisma.campaign.create({
+        data: {
+          segmentId,
+          messageText,
+          status: 'draft',
+          createdBy: req.user.id,
+        },
+      });
+    } else {
+      // New flow - embedded segment data
+      segmentRulesToApply = segmentRules;
+      
+      // Create campaign with embedded segment data
+      // Explicitly cast the data fields to match Prisma's expectations
+      // @ts-ignore - we know these fields exist in the schema even if Prisma types aren't updated
+      campaign = await prisma.campaign.create({
+        data: {
+          // @ts-ignore - we know these fields exist in the schema even if Prisma types aren't updated
+          segmentName,
+          // @ts-ignore - we know these fields exist in the schema even if Prisma types aren't updated
+          segmentRules: segmentRules as any, // Use type assertion for the JSON field
+          messageText,
+          status: 'draft',
+          createdBy: req.user.id,
+        },
       });
     }
 
-    // Create campaign
-    const campaign = await prisma.campaign.create({
-      data: {
-        segmentId,
-        messageText,
-        status: 'draft',
-        createdBy: req.user.id,
-      },
-    });
-
-    // Get customers matching the segment
-    const matchingCustomers = await applySegmentRules(segment.rules as any);
+    // Get customers matching the segment rules
+    const matchingCustomers = await applySegmentRules(segmentRulesToApply);
 
     // Simulate campaign delivery
     const deliveryResults = await simulateCampaignDelivery(campaign.id, matchingCustomers, messageText);
@@ -485,7 +519,7 @@ router.post(
     const { objective, targetAudience, tone, maxLength } = req.body;
 
     try {
-      const suggestions = await OpenAIService.generateMessageSuggestions({
+      const suggestions = await GeminiService.generateMessageSuggestions({
         objective,
         targetAudience,
         tone,
@@ -502,7 +536,20 @@ router.post(
           maxLength,
         },
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Message suggestion error:', error);
+      
+      // Send a more helpful error message for quota issues
+      if (error.message && (
+          error.message.includes('quota') || 
+          error.message.includes('rate limit') || 
+          error.message.includes('insufficient_quota'))) {
+        return res.status(429).json({
+          error: 'AI service quota exceeded',
+          details: 'The AI service is currently unavailable due to quota limitations. Please try again later or contact support.'
+        });
+      }
+      
       res.status(400).json({
         error: 'Failed to generate message suggestions',
         details: error instanceof Error ? error.message : 'Unknown error',
@@ -583,19 +630,32 @@ router.get(
       name: campaign.messageText.substring(0, 50) + '...',
       totalSent,
       successRate,
-      segmentName: campaign.segment.name,
+      segmentName: campaign.segment?.name || 'Embedded Segment', // Handle embedded segments
       messageText: campaign.messageText,
     };
 
     try {
-      const insights = await OpenAIService.generateCampaignInsights(campaignData);
+      const insights = await GeminiService.generateCampaignInsights(campaignData);
 
       res.json({
         message: 'Campaign insights generated successfully',
         insights,
         campaignData,
       });
-    } catch (error) {
+    } catch (error: any) {
+      console.error('Campaign insights error:', error);
+      
+      // Handle OpenAI service quota issues specifically
+      if (error.message && (
+          error.message.includes('quota') || 
+          error.message.includes('rate limit') || 
+          error.message.includes('insufficient_quota'))) {
+        return res.status(429).json({
+          error: 'AI service quota exceeded',
+          details: 'The AI service is currently unavailable due to quota limitations. Please try again later or contact support.'
+        });
+      }
+      
       res.status(500).json({
         error: 'Failed to generate campaign insights',
         details: error instanceof Error ? error.message : 'Unknown error',
@@ -758,49 +818,89 @@ router.get(
       throw createError('Authentication required', 401);
     }
     
-    // Test natural language to segment rules
-    const ruleDescription = "Customers who spent more than 1000 and have visited the site at least 3 times";
-    const rules = await OpenAIService.parseNaturalLanguageRules({ description: ruleDescription });
-    
-    // Test message suggestions
-    const messageSuggestions = await OpenAIService.generateMessageSuggestions({
-      objective: "Launch our new premium subscription service",
-      targetAudience: "High-value customers",
-      tone: "professional"
-    });
-    
-    // Test campaign insights
-    const campaignData = {
-      name: "Summer Sale Campaign",
-      totalSent: 1500,
-      successRate: 85,
-      segmentName: "Active Customers",
-      messageText: "Get 25% off on all summer products! Limited time offer."
+    let testsSucceeded = 0;
+    let testsAttempted = 0;
+    const testResults: any = {
+      naturalLanguageRules: { status: 'pending' },
+      messageSuggestions: { status: 'pending' },
+      campaignInsights: { status: 'pending' }
     };
     
-    const insights = await OpenAIService.generateCampaignInsights(campaignData);
+    // Test natural language to segment rules
+    try {
+      testsAttempted++;
+      const ruleDescription = "Customers who spent more than 1000 and have visited the site at least 3 times";
+      const rules = await GeminiService.parseNaturalLanguageRules({ description: ruleDescription });
+      
+      testResults.naturalLanguageRules = {
+        status: 'success',
+        input: ruleDescription,
+        output: rules
+      };
+      testsSucceeded++;
+    } catch (error: any) {
+      testResults.naturalLanguageRules = {
+        status: 'error',
+        error: error.message || 'Unknown error'
+      };
+    }
+    
+    // Test message suggestions
+    try {
+      testsAttempted++;
+      const messageSuggestions = await GeminiService.generateMessageSuggestions({
+        objective: "Launch our new premium subscription service",
+        targetAudience: "High-value customers",
+        tone: "professional"
+      });
+      
+      testResults.messageSuggestions = {
+        status: 'success',
+        input: {
+          objective: "Launch our new premium subscription service",
+          targetAudience: "High-value customers",
+          tone: "professional"
+        },
+        output: messageSuggestions
+      };
+      testsSucceeded++;
+    } catch (error: any) {
+      testResults.messageSuggestions = {
+        status: 'error',
+        error: error.message || 'Unknown error'
+      };
+    }
+    
+    // Test campaign insights
+    try {
+      testsAttempted++;
+      const campaignData = {
+        name: "Summer Sale Campaign",
+        totalSent: 1500,
+        successRate: 85,
+        segmentName: "Active Customers",
+        messageText: "Get 25% off on all summer products! Limited time offer."
+      };
+      
+      const insights = await GeminiService.generateCampaignInsights(campaignData);
+      
+      testResults.campaignInsights = {
+        status: 'success',
+        input: campaignData,
+        output: insights
+      };
+      testsSucceeded++;
+    } catch (error: any) {
+      testResults.campaignInsights = {
+        status: 'error',
+        error: error.message || 'Unknown error'
+      };
+    }
     
     res.json({
-      message: "AI features tested successfully",
-      tests: {
-        naturalLanguageRules: {
-          input: ruleDescription,
-          output: rules
-        },
-        messageSuggestions: {
-          input: {
-            objective: "Launch our new premium subscription service",
-            targetAudience: "High-value customers",
-            tone: "professional"
-          },
-          output: messageSuggestions
-        },
-        campaignInsights: {
-          input: campaignData,
-          output: insights
-        }
-      },
-      note: "These responses may be generated by the mock service if no OpenAI API key is configured."
+      message: `AI features test completed (${testsSucceeded}/${testsAttempted} successful)`,
+      testResults,
+      quotaStatus: testsSucceeded < testsAttempted ? 'unavailable' : 'available'
     });
   })
 );

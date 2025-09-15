@@ -13,104 +13,40 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Search, Eye, BarChart, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Search, Eye, BarChart, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import api, { Campaign } from '@/lib/api'
+import { format, parseISO } from 'date-fns'
+import Link from 'next/link'
+import toast from 'react-hot-toast'
 
 // Campaign status types and colors
 const statusColors = {
-  'scheduled': 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-300',
-  'sending': 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300',
-  'completed': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
   'draft': 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
+  'sent': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
   'failed': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
 } as const
-
-type CampaignStatus = keyof typeof statusColors
-
-interface Campaign {
-  id: string
-  name: string
-  segment: string
-  status: CampaignStatus
-  recipients: number
-  openRate: number
-  clickRate: number
-  sentDate: string
-}
-
-// Mock campaign data
-const mockCampaigns: Campaign[] = [
-  {
-    id: '1',
-    name: 'Summer Sale Announcement',
-    segment: 'Active Customers',
-    status: 'completed',
-    recipients: 1245,
-    openRate: 68.4,
-    clickRate: 24.2,
-    sentDate: '2023-06-15'
-  },
-  {
-    id: '2',
-    name: 'New Product Launch',
-    segment: 'Previous Buyers',
-    status: 'scheduled',
-    recipients: 876,
-    openRate: 0,
-    clickRate: 0,
-    sentDate: '2023-07-10'
-  },
-  {
-    id: '3',
-    name: 'Customer Feedback Request',
-    segment: 'All Customers',
-    status: 'sending',
-    recipients: 2150,
-    openRate: 32.1,
-    clickRate: 8.7,
-    sentDate: '2023-07-05'
-  },
-  {
-    id: '4',
-    name: 'Loyalty Program Invitation',
-    segment: 'High-Value Customers',
-    status: 'draft',
-    recipients: 432,
-    openRate: 0,
-    clickRate: 0,
-    sentDate: '-'
-  },
-  {
-    id: '5',
-    name: 'Black Friday Preview',
-    segment: 'All Subscribers',
-    status: 'failed',
-    recipients: 1876,
-    openRate: 12.3,
-    clickRate: 3.4,
-    sentDate: '2023-06-29'
-  }
-]
 
 export function CampaignList() {
   const [searchQuery, setSearchQuery] = useState('')
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 5
   
-  // Filter campaigns by search query
-  const filteredCampaigns = mockCampaigns.filter(campaign =>
-    campaign.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    campaign.segment.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    campaign.status.toLowerCase().includes(searchQuery.toLowerCase())
-  )
+  // Fetch campaigns from API
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['campaigns', { page: currentPage, search: searchQuery }],
+    queryFn: () => api.getCampaigns({ 
+      page: currentPage,
+      limit: itemsPerPage,
+      search: searchQuery || undefined
+    }),
+  })
   
-  // Paginate campaigns
-  const indexOfLastItem = currentPage * itemsPerPage
-  const indexOfFirstItem = indexOfLastItem - itemsPerPage
-  const currentCampaigns = filteredCampaigns.slice(indexOfFirstItem, indexOfLastItem)
-  const totalPages = Math.ceil(filteredCampaigns.length / itemsPerPage)
+  const campaigns = data?.campaigns || []
+  const pagination = data?.pagination
   
   const nextPage = () => {
-    if (currentPage < totalPages) {
+    if (pagination && currentPage < pagination.pages) {
       setCurrentPage(currentPage + 1)
     }
   }
@@ -119,6 +55,54 @@ export function CampaignList() {
     if (currentPage > 1) {
       setCurrentPage(currentPage - 1)
     }
+  }
+  
+  // Get campaign subject from message text
+  const getCampaignSubject = (messageText: string): string => {
+    if (!messageText) return 'Untitled Campaign'
+    
+    const subjectMatch = messageText.match(/Subject: (.*?)(\n|$)/)
+    if (subjectMatch && subjectMatch[1]) {
+      return subjectMatch[1].trim()
+    }
+    
+    // If no subject found, return first line or truncated message
+    const firstLine = messageText.split('\n')[0]
+    return firstLine || messageText.substring(0, 30) + '...'
+  }
+  
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Past Campaigns</CardTitle>
+        </CardHeader>
+        <CardContent className="text-center py-8">
+          <Loader2 className="h-8 w-8 animate-spin mx-auto text-gray-400" />
+          <p className="mt-2 text-gray-500">Loading campaigns...</p>
+        </CardContent>
+      </Card>
+    )
+  }
+  
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Past Campaigns</CardTitle>
+        </CardHeader>
+        <CardContent className="text-center py-8">
+          <p className="text-red-500">Failed to load campaigns. Please try again.</p>
+          <Button 
+            variant="outline" 
+            className="mt-4"
+            onClick={() => window.location.reload()}
+          >
+            Retry
+          </Button>
+        </CardContent>
+      </Card>
+    )
   }
   
   return (
@@ -132,7 +116,10 @@ export function CampaignList() {
             placeholder="Search campaigns..."
             className="w-full pl-8"
             value={searchQuery}
-            onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchQuery(e.target.value)}
+            onChange={(e: React.ChangeEvent<HTMLInputElement>) => {
+              setSearchQuery(e.target.value)
+              setCurrentPage(1) // Reset to first page on search
+            }}
           />
         </div>
       </CardHeader>
@@ -144,47 +131,76 @@ export function CampaignList() {
               <TableHead>Segment</TableHead>
               <TableHead>Status</TableHead>
               <TableHead className="text-right">Recipients</TableHead>
-              <TableHead className="text-right">Open Rate</TableHead>
-              <TableHead className="text-right">Click Rate</TableHead>
-              <TableHead className="text-right">Sent Date</TableHead>
+              <TableHead className="text-right">Success Rate</TableHead>
+              <TableHead className="text-right">Created Date</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
-            {currentCampaigns.map((campaign) => (
-              <TableRow key={campaign.id}>
-                <TableCell className="font-medium">{campaign.name}</TableCell>
-                <TableCell>{campaign.segment}</TableCell>
-                <TableCell>
-                  <Badge className={statusColors[campaign.status]}>
-                    {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
-                  </Badge>
-                </TableCell>
-                <TableCell className="text-right">{campaign.recipients.toLocaleString()}</TableCell>
-                <TableCell className="text-right">
-                  {campaign.openRate > 0 ? `${campaign.openRate}%` : '-'}
-                </TableCell>
-                <TableCell className="text-right">
-                  {campaign.clickRate > 0 ? `${campaign.clickRate}%` : '-'}
-                </TableCell>
-                <TableCell className="text-right">{campaign.sentDate}</TableCell>
-                <TableCell className="text-right">
-                  <div className="flex justify-end gap-2">
-                    <Button variant="ghost" size="icon" title="View Campaign">
-                      <Eye className="h-4 w-4" />
-                    </Button>
-                    <Button variant="ghost" size="icon" title="View Analytics">
-                      <BarChart className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-            
-            {currentCampaigns.length === 0 && (
+            {campaigns.length > 0 ? (
+              campaigns.map((campaign: Campaign) => (
+                <TableRow key={campaign.id}>
+                  <TableCell className="font-medium">{getCampaignSubject(campaign.messageText)}</TableCell>
+                  <TableCell>{campaign.segment?.name || 'Unknown Segment'}</TableCell>
+                  <TableCell>
+                    <Badge className={statusColors[campaign.status as keyof typeof statusColors] || statusColors.draft}>
+                      {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
+                    </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {campaign.stats?.totalSent || 0}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {campaign.stats?.successRate ? `${campaign.stats.successRate.toFixed(1)}%` : '-'}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {campaign.createdAt 
+                      ? format(parseISO(campaign.createdAt), 'MMM d, yyyy')
+                      : '-'
+                    }
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        title="View Campaign"
+                        asChild
+                      >
+                        <Link href={`/dashboard/campaigns/${campaign.id}`}>
+                          <Eye className="h-4 w-4" />
+                        </Link>
+                      </Button>
+                      <Button 
+                        variant="ghost" 
+                        size="icon" 
+                        title="View Analytics"
+                        onClick={() => {
+                          toast.promise(
+                            api.getCampaignInsights(campaign.id)
+                              .then(({ insights }) => {
+                                alert(insights)
+                                return insights
+                              }),
+                            {
+                              loading: 'Generating insights...',
+                              success: 'Campaign insights generated!',
+                              error: 'Failed to generate insights'
+                            }
+                          )
+                        }}
+                      >
+                        <BarChart className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))
+            ) : (
               <TableRow>
-                <TableCell colSpan={8} className="text-center py-6 text-gray-500">
-                  No campaigns found matching your search.
+                <TableCell colSpan={7} className="text-center py-6 text-gray-500">
+                  No campaigns found. 
+                  {searchQuery ? 'Try a different search term.' : 'Create your first campaign!'}
                 </TableCell>
               </TableRow>
             )}
@@ -192,10 +208,11 @@ export function CampaignList() {
         </Table>
         
         {/* Pagination */}
-        {totalPages > 1 && (
+        {pagination && pagination.pages > 1 && (
           <div className="flex items-center justify-between mt-4">
             <div className="text-sm text-gray-500">
-              Showing {indexOfFirstItem + 1}-{Math.min(indexOfLastItem, filteredCampaigns.length)} of {filteredCampaigns.length}
+              Showing {((pagination.page - 1) * pagination.limit) + 1}-
+              {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total}
             </div>
             <div className="flex gap-1">
               <Button
@@ -210,7 +227,7 @@ export function CampaignList() {
                 variant="outline"
                 size="icon"
                 onClick={nextPage}
-                disabled={currentPage === totalPages}
+                disabled={currentPage === pagination.pages}
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>

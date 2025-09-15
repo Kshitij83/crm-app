@@ -22,7 +22,7 @@ const rl = readline.createInterface({
   output: process.stdout
 });
 
-const API_BASE_URL = 'http://localhost:3001/api';
+const API_BASE_URL = 'http://localhost:5000/api';
 let authToken = '';
 let testUserId = '';
 let testEmail = '';
@@ -87,7 +87,7 @@ async function testSignin() {
   };
   
   try {
-    const response = await fetch(`${API_BASE_URL}/auth/signin`, {
+    const response = await fetch(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(credentials)

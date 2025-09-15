@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { useSession } from 'next-auth/react'
+import { getSession } from 'next-auth/react'
 import { API_URL } from './config'
 
 // Create axios instance
@@ -11,14 +11,53 @@ const apiClient = axios.create({
 })
 
 // Add auth token to requests
-apiClient.interceptors.request.use((config) => {
-  // Get token from localStorage (will be set during login)
-  const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
+apiClient.interceptors.request.use(async (config) => {
+  try {
+    // First, try to get token from NextAuth session
+    const session = await getSession()
+    
+    if (session?.accessToken) {
+      config.headers.Authorization = `Bearer ${session.accessToken}`
+      return config
+    }
+    
+    // Only as a fallback for backward compatibility, check localStorage
+    // This helps with transition from old auth system to NextAuth
+    if (typeof window !== 'undefined') {
+      const token = localStorage.getItem('auth_token')
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`
+        
+        // Optional: If we want to clean up old tokens after using them once
+        // localStorage.removeItem('auth_token')
+      }
+    }
+  } catch (error) {
+    console.error('Error setting authorization header:', error)
   }
   return config
 })
+
+// Handle API responses for quota tracking
+apiClient.interceptors.response.use(
+  (response) => {
+    return response;
+  },
+  (error) => {
+    // Check for AI service quota errors from our API
+    if (error.response?.status === 429 && 
+        error.response?.data?.error === 'AI service quota exceeded') {
+      // Set flag in localStorage that we're having quota issues
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('ai_quota_issue', 'true');
+        // Trigger a storage event so other components can react
+        window.dispatchEvent(new Event('storage'));
+      }
+    }
+    
+    return Promise.reject(error);
+  }
+);
 
 // API types
 export interface Customer {
@@ -228,18 +267,38 @@ export const api = {
     return response.data
   },
 
-  getSegmentPreview: async (id: string): Promise<{
-    segmentId: string
-    segmentName: string
-    totalCustomers: number
-    customers: Customer[]
-  }> => {
-    const response = await apiClient.get(`/api/segments/${id}/preview`)
-    return response.data
+  getSegmentPreview: async (id: string | any): Promise<any> => {
+    // If id is a string, we're fetching an existing segment
+    if (typeof id === 'string') {
+      const response = await apiClient.get(`/api/segments/${id}/preview`)
+      return response.data
+    } 
+    // Otherwise, id contains rules for preview
+    else {
+      const rules = id;
+      const response = await apiClient.post('/api/segments/preview-rules', { rules })
+      const totalCustomers = await api.getCustomers({ limit: 1 })
+        .then(data => data.pagination.total || 0)
+        .catch(() => 200); // Fallback default
+      
+      return {
+        count: response.data.totalCustomers,
+        percentage: response.data.totalCustomers > 0 ? 
+          Math.round((response.data.totalCustomers / totalCustomers) * 100) : 0
+      }
+    }
   },
 
   parseRules: async (description: string): Promise<{ rules: any }> => {
-    const response = await apiClient.post('/api/segments/parse-rules', { description })
+    const response = await apiClient.post('/api/segments/parse-rules', { description });
+    return response.data;
+  },
+
+  previewRules: async (rules: any): Promise<{
+    totalCustomers: number;
+    customers: Customer[];
+  }> => {
+    const response = await apiClient.post('/api/segments/preview-rules', { rules })
     return response.data
   },
 
@@ -254,7 +313,12 @@ export const api = {
     return response.data
   },
 
-  createCampaign: async (data: { segmentId: string; messageText: string }): Promise<{
+  createCampaign: async (data: { 
+    segmentId?: string; // Optional for backward compatibility
+    segmentName?: string; // New field for direct segment creation
+    segmentRules?: any; // New field for direct segment creation
+    messageText: string 
+  }): Promise<{
     campaign: Campaign
     delivery: {
       totalCustomers: number
@@ -272,19 +336,66 @@ export const api = {
     return response.data
   },
 
+  getCampaignInsights: async (id: string): Promise<{ insights: string }> => {
+    const response = await apiClient.get(`/api/campaigns/${id}/insights`)
+    return response.data
+  },
+
   getMessageSuggestions: async (data: {
     objective: string
     targetAudience: string
     tone?: 'professional' | 'casual' | 'friendly' | 'urgent'
     maxLength?: number
   }): Promise<{ suggestions: string[] }> => {
-    const response = await apiClient.post('/api/campaigns/suggest-message', data)
-    return response.data
+    const response = await apiClient.post('/api/campaigns/suggest-message', data);
+    return response.data;
   },
 
-  getCampaignInsights: async (id: string): Promise<{ insights: string }> => {
-    const response = await apiClient.get(`/api/campaigns/${id}/insights`)
-    return response.data
+  // AI API status
+  checkAIStatus: async (): Promise<{
+    status: 'available' | 'unavailable',
+    features: { [key: string]: boolean },
+    quotaReset?: string
+  }> => {
+    try {
+      const response = await apiClient.get('/api/campaigns/test-ai-features');
+      
+      if (response.data.quotaStatus === 'available') {
+        // If the test was successful, clear any stored quota issues
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('ai_quota_issue');
+          // Trigger a storage event so other components can react
+          window.dispatchEvent(new Event('storage'));
+        }
+      } else {
+        // Update the quota issue flag
+        if (typeof window !== 'undefined') {
+          localStorage.setItem('ai_quota_issue', 'true');
+          // Trigger a storage event so other components can react
+          window.dispatchEvent(new Event('storage'));
+        }
+      }
+      
+      return {
+        status: response.data.quotaStatus || 'unavailable',
+        features: {
+          messageSuggestions: response.data.testResults?.messageSuggestions?.status === 'success',
+          ruleGeneration: response.data.testResults?.naturalLanguageRules?.status === 'success',
+          campaignInsights: response.data.testResults?.campaignInsights?.status === 'success'
+        },
+        quotaReset: 'Typically reset monthly based on your Google AI plan'
+      };
+    } catch (error) {
+      // Assume unavailable if test fails
+      return {
+        status: 'unavailable',
+        features: {
+          messageSuggestions: false,
+          ruleGeneration: false,
+          campaignInsights: false
+        }
+      };
+    }
   },
 }
 

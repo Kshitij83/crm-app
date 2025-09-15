@@ -24,6 +24,29 @@ export default function LoginPage() {
     setError('')
 
     try {
+      // First, get the token directly from the backend
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || '/api'}/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, password }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        setError(data.message || 'Invalid email or password')
+        setIsLoading(false)
+        return
+      }
+
+      // Store token in localStorage
+      if (data.token) {
+        localStorage.setItem('auth_token', data.token)
+      }
+
+      // Then sign in with NextAuth for session management
       const result = await signIn('credentials', {
         redirect: false,
         email,
@@ -38,6 +61,7 @@ export default function LoginPage() {
 
       router.push('/dashboard')
     } catch (error) {
+      console.error('Login error:', error)
       setError('Something went wrong. Please try again.')
       setIsLoading(false)
     }

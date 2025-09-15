@@ -9,10 +9,40 @@ import {
   Plus,
   Send,
   TrendingUp,
-  Users
+  Users,
+  Loader2
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import api from '@/lib/api'
 
 export default function CampaignsPage() {
+  // Fetch campaigns stats
+  const { data, isLoading } = useQuery({
+    queryKey: ['campaigns-stats'],
+    queryFn: () => api.getCampaigns({ limit: 100 }),
+  })
+
+  // Calculate stats
+  const totalCampaigns = data?.campaigns?.length || 0
+  const sentCampaigns = data?.campaigns?.filter(c => c.status === 'sent')?.length || 0
+  
+  // Calculate total recipients and success rate
+  let totalRecipients = 0
+  let successfulRecipients = 0
+  
+  if (data?.campaigns) {
+    data.campaigns.forEach(campaign => {
+      if (campaign.stats) {
+        totalRecipients += campaign.stats.totalSent || 0
+        successfulRecipients += campaign.stats.successCount || 0
+      }
+    })
+  }
+  
+  const avgSuccessRate = totalRecipients > 0 
+    ? ((successfulRecipients / totalRecipients) * 100).toFixed(1)
+    : '0.0'
+  
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -41,9 +71,16 @@ export default function CampaignsPage() {
             <Megaphone className="h-4 w-4 text-gray-400 dark:text-gray-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              5
-            </div>
+            {isLoading ? (
+              <div className="flex items-center space-x-2">
+                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                <span className="text-gray-500">Loading...</span>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {totalCampaigns}
+              </div>
+            )}
           </CardContent>
         </Card>
         
@@ -55,23 +92,37 @@ export default function CampaignsPage() {
             <Send className="h-4 w-4 text-green-500 dark:text-green-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              3
-            </div>
+            {isLoading ? (
+              <div className="flex items-center space-x-2">
+                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                <span className="text-gray-500">Loading...</span>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {sentCampaigns}
+              </div>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              Avg. Open Rate
+              Avg. Success Rate
             </CardTitle>
             <TrendingUp className="h-4 w-4 text-blue-500 dark:text-blue-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              42.3%
-            </div>
+            {isLoading ? (
+              <div className="flex items-center space-x-2">
+                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                <span className="text-gray-500">Loading...</span>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {avgSuccessRate}%
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -83,9 +134,16 @@ export default function CampaignsPage() {
             <Users className="h-4 w-4 text-purple-500 dark:text-purple-400" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              6,579
-            </div>
+            {isLoading ? (
+              <div className="flex items-center space-x-2">
+                <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                <span className="text-gray-500">Loading...</span>
+              </div>
+            ) : (
+              <div className="text-2xl font-bold text-gray-900 dark:text-white">
+                {totalRecipients.toLocaleString()}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
