@@ -21,10 +21,10 @@ import Link from 'next/link'
 import toast from 'react-hot-toast'
 
 // Campaign status types and colors
-const statusColors = {
-  'draft': 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300',
-  'sent': 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300',
-  'failed': 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300',
+const statusVariants: Record<string, 'secondary' | 'success' | 'destructive'> = {
+  draft: 'secondary',
+  sent: 'success',
+  failed: 'destructive',
 } as const
 
 export function CampaignList() {
@@ -143,8 +143,8 @@ export function CampaignList() {
                   <TableCell className="font-medium">{getCampaignSubject(campaign.messageText)}</TableCell>
                   <TableCell>{campaign.segment?.name || 'Unknown Segment'}</TableCell>
                   <TableCell>
-                    <Badge className={statusColors[campaign.status as keyof typeof statusColors] || statusColors.draft}>
-                      {campaign.status.charAt(0).toUpperCase() + campaign.status.slice(1)}
+                    <Badge variant={statusVariants[campaign.status] || 'secondary'} className="w-20 justify-center capitalize">
+                      {campaign.status}
                     </Badge>
                   </TableCell>
                   <TableCell className="text-right">

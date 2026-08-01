@@ -2,40 +2,58 @@
 
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { 
-  Users, 
-  Search, 
-  Plus, 
-  Filter,
-  MoreHorizontal,
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table'
+import { PageHeader } from '@/components/ui/page-header'
+import { StatCard } from '@/components/ui/stat-card'
+import {
+  Users,
+  Search,
   Mail,
   Phone,
   Calendar,
-  DollarSign
+  DollarSign,
+  Activity,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
-import Link from 'next/link'
 import { api, Customer } from '@/lib/api'
 import { format } from 'date-fns'
 
 export default function CustomersPage() {
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
-  const [sortBy, setSortBy] = useState<'name' | 'email' | 'totalSpend' | 'visits' | 'lastActiveDate' | 'createdAt'>('createdAt')
+  const [sortBy, setSortBy] = useState<
+    'name' | 'email' | 'totalSpend' | 'visits' | 'lastActiveDate' | 'createdAt'
+  >('createdAt')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['customers', { page, search, sortBy, sortOrder }],
-    queryFn: () => api.getCustomers({ 
-      page, 
-      limit: 10, 
-      search: search || undefined,
-      sortBy,
-      sortOrder 
-    }),
+    queryFn: () =>
+      api.getCustomers({
+        page,
+        limit: 10,
+        search: search || undefined,
+        sortBy,
+        sortOrder,
+      }),
   })
 
   const customers = data?.customers || []
@@ -43,184 +61,111 @@ export default function CustomersPage() {
 
   const handleSearch = (value: string) => {
     setSearch(value)
-    setPage(1) // Reset to first page when searching
+    setPage(1)
   }
 
   const getCustomerStatus = (customer: Customer) => {
-    const daysSinceLastActive = customer.lastActiveDate 
-      ? Math.floor((Date.now() - new Date(customer.lastActiveDate).getTime()) / (1000 * 60 * 60 * 24))
+    const daysSinceLastActive = customer.lastActiveDate
+      ? Math.floor(
+          (Date.now() - new Date(customer.lastActiveDate).getTime()) /
+            (1000 * 60 * 60 * 24)
+        )
       : null
 
-    if (daysSinceLastActive === null) return { label: 'Never Active', variant: 'secondary' as const }
-    if (daysSinceLastActive <= 7) return { label: 'Active', variant: 'success' as const }
-    if (daysSinceLastActive <= 30) return { label: 'Recently Active', variant: 'warning' as const }
+    if (daysSinceLastActive === null)
+      return { label: 'Never Active', variant: 'secondary' as const }
+    if (daysSinceLastActive <= 7)
+      return { label: 'Active', variant: 'success' as const }
+    if (daysSinceLastActive <= 30)
+      return { label: 'Recently Active', variant: 'warning' as const }
     return { label: 'Inactive', variant: 'destructive' as const }
   }
 
-  if (isLoading) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Customers</h1>
-            <p className="text-gray-600 dark:text-gray-300">Manage your customer database</p>
-          </div>
-        </div>
-        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-          {[...Array(6)].map((_, i) => (
-            <Card key={i} className="animate-pulse">
-              <CardContent className="p-6">
-                <div className="h-4 bg-gray-200 dark:bg-gray-700 rounded w-3/4 mb-2"></div>
-                <div className="h-3 bg-gray-200 dark:bg-gray-700 rounded w-1/2"></div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
-    )
-  }
+  const activeCount = customers.filter((c) => {
+    const daysSinceLastActive = c.lastActiveDate
+      ? Math.floor((Date.now() - new Date(c.lastActiveDate).getTime()) / (1000 * 60 * 60 * 24))
+      : null
+    return daysSinceLastActive !== null && daysSinceLastActive <= 30
+  }).length
 
-  if (error) {
-    return (
-      <div className="space-y-6">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Customers</h1>
-            <p className="text-gray-600 dark:text-gray-300">Manage your customer database</p>
-          </div>
-        </div>
-        <Card>
-          <CardContent className="p-6 text-center">
-            <p className="text-red-600 dark:text-red-400">Failed to load customers. Please try again.</p>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
+  const highValueCount = customers.filter((c) => c.totalSpend > 2000).length
+
+  const newThisMonth = customers.filter((c) => {
+    const createdAt = new Date(c.createdAt)
+    const monthAgo = new Date()
+    monthAgo.setMonth(monthAgo.getMonth() - 1)
+    return createdAt > monthAgo
+  }).length
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Customers</h1>
-          <p className="text-gray-600 dark:text-gray-300">
-            {pagination?.total || 0} customers in your database
-          </p>
-        </div>
-        <Button asChild>
-          <Link href="/dashboard/customers/new">
-            <Plus className="mr-2 h-4 w-4" />
-            Add Customer
-          </Link>
-        </Button>
-      </div>
+      <PageHeader
+        title="Customers"
+        description={
+          pagination?.total != null
+            ? `${pagination.total.toLocaleString()} customers in your database`
+            : 'Manage your customer database'
+        }
+      />
 
       {/* Stats */}
       <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              Total Customers
-            </CardTitle>
-            <Users className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              {pagination?.total || 0}
-            </div>
-          </CardContent>
-        </Card>
-        
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              Active Customers
-            </CardTitle>
-            <Users className="h-4 w-4 text-green-500 dark:text-green-400" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              {customers.filter(c => {
-                const daysSinceLastActive = c.lastActiveDate 
-                  ? Math.floor((Date.now() - new Date(c.lastActiveDate).getTime()) / (1000 * 60 * 60 * 24))
-                  : null
-                return daysSinceLastActive !== null && daysSinceLastActive <= 30
-              }).length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              High Value
-            </CardTitle>
-            <DollarSign className="h-4 w-4 text-yellow-500 dark:text-yellow-400" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              {customers.filter(c => c.totalSpend > 2000).length}
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium text-gray-600 dark:text-gray-300">
-              New This Month
-            </CardTitle>
-            <Calendar className="h-4 w-4 text-blue-500 dark:text-blue-400" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-gray-900 dark:text-white">
-              {customers.filter(c => {
-                const createdAt = new Date(c.createdAt)
-                const monthAgo = new Date()
-                monthAgo.setMonth(monthAgo.getMonth() - 1)
-                return createdAt > monthAgo
-              }).length}
-            </div>
-          </CardContent>
-        </Card>
+        <StatCard
+          label="Total Customers"
+          value={isLoading ? '…' : pagination?.total?.toLocaleString() ?? '—'}
+          icon={<Users className="h-5 w-5" />}
+          accent="blue"
+        />
+        <StatCard
+          label="Active (30d)"
+          value={isLoading ? '…' : activeCount}
+          icon={<Activity className="h-5 w-5" />}
+          accent="green"
+          hint="Interacted in the last 30 days"
+        />
+        <StatCard
+          label="High Value"
+          value={isLoading ? '…' : highValueCount}
+          icon={<DollarSign className="h-5 w-5" />}
+          accent="amber"
+          hint="Spent over $2,000"
+        />
+        <StatCard
+          label="New This Month"
+          value={isLoading ? '…' : newThisMonth}
+          icon={<Calendar className="h-5 w-5" />}
+          accent="purple"
+        />
       </div>
 
-      {/* Search and Filters */}
+      {/* Customer table */}
       <Card>
         <CardHeader>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <CardTitle>Customer List</CardTitle>
-              <CardDescription>
-                Search and filter your customers
-              </CardDescription>
+              <CardDescription>Search, sort, and manage your customers</CardDescription>
             </div>
-            <div className="flex items-center space-x-2">
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Search customers..."
-                  value={search}
-                  onChange={(e) => handleSearch(e.target.value)}
-                  className="pl-10 w-64"
-                />
-              </div>
-              <Button variant="outline" size="sm">
-                <Filter className="mr-2 h-4 w-4" />
-                Filters
-              </Button>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                placeholder="Search customers..."
+                value={search}
+                onChange={(e) => handleSearch(e.target.value)}
+                className="w-full pl-9 sm:w-72"
+              />
             </div>
           </div>
         </CardHeader>
         <CardContent>
-          {/* Sort Options */}
-          <div className="flex items-center space-x-4 mb-4">
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Sort by:</label>
+          {/* Sort options */}
+          <div className="mb-4 flex flex-wrap items-center gap-4">
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground">Sort by:</label>
               <select
                 value={sortBy}
-                onChange={(e) => setSortBy(e.target.value as any)}
-                className="border border-gray-300 dark:border-gray-600 rounded-md px-3 py-1 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                onChange={(e) => setSortBy(e.target.value as typeof sortBy)}
+                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm"
               >
                 <option value="createdAt">Date Added</option>
                 <option value="name">Name</option>
@@ -230,12 +175,12 @@ export default function CustomersPage() {
                 <option value="lastActiveDate">Last Active</option>
               </select>
             </div>
-            <div className="flex items-center space-x-2">
-              <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Order:</label>
+            <div className="flex items-center gap-2">
+              <label className="text-sm font-medium text-muted-foreground">Order:</label>
               <select
                 value={sortOrder}
-                onChange={(e) => setSortOrder(e.target.value as any)}
-                className="border border-gray-300 dark:border-gray-600 rounded-md px-3 py-1 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
+                onChange={(e) => setSortOrder(e.target.value as 'asc' | 'desc')}
+                className="rounded-md border border-input bg-background px-3 py-1.5 text-sm"
               >
                 <option value="desc">Descending</option>
                 <option value="asc">Ascending</option>
@@ -243,88 +188,115 @@ export default function CustomersPage() {
             </div>
           </div>
 
-          {/* Customer List */}
-          <div className="space-y-4">
-            {customers.map((customer) => {
-              const status = getCustomerStatus(customer)
-              return (
-                <div
-                  key={customer.id}
-                  className="flex items-center justify-between p-4 border border-gray-200 dark:border-gray-700 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800"
-                >
-                  <div className="flex items-center space-x-4">
-                    <div className="h-12 w-12 rounded-full bg-blue-100 dark:bg-blue-900 flex items-center justify-center">
-                      <span className="text-lg font-medium text-blue-600 dark:text-blue-400">
-                        {customer.name.charAt(0)}
-                      </span>
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-medium text-gray-900 dark:text-white">
-                        {customer.name}
-                      </h3>
-                      <div className="flex items-center space-x-4 text-sm text-gray-500 dark:text-gray-400">
-                        <div className="flex items-center">
-                          <Mail className="h-4 w-4 mr-1" />
-                          {customer.email}
-                        </div>
-                        {customer.phone && (
-                          <div className="flex items-center">
-                            <Phone className="h-4 w-4 mr-1" />
-                            {customer.phone}
+          {isLoading ? (
+            <div className="space-y-3">
+              {[...Array(6)].map((_, i) => (
+                <div key={i} className="h-14 animate-pulse rounded-lg bg-muted" />
+              ))}
+            </div>
+          ) : error ? (
+            <div className="rounded-xl border border-dashed py-12 text-center text-destructive">
+              Failed to load customers. Please try again.
+            </div>
+          ) : customers.length === 0 ? (
+            <div className="rounded-xl border border-dashed py-12 text-center">
+              <Users className="mx-auto h-8 w-8 text-muted-foreground" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                {search
+                  ? 'No customers match your search.'
+                  : 'No customers yet. Import data or add your first customer.'}
+              </p>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Customer</TableHead>
+                  <TableHead className="hidden md:table-cell">Contact</TableHead>
+                  <TableHead className="text-right">Total Spend</TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">Visits</TableHead>
+                  <TableHead className="text-right">Status</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {customers.map((customer) => {
+                  const status = getCustomerStatus(customer)
+                  return (
+                    <TableRow key={customer.id} className="group">
+                      <TableCell>
+                        <div className="flex items-center gap-3">
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-indigo-500 text-sm font-medium text-white">
+                            {customer.name.charAt(0).toUpperCase()}
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                  
-                  <div className="flex items-center space-x-6">
-                    <div className="text-right">
-                      <div className="text-sm font-medium text-gray-900 dark:text-white">
-                        ${customer.totalSpend.toLocaleString()}
-                      </div>
-                      <div className="text-xs text-gray-500 dark:text-gray-400">
-                        {customer.visits} visits
-                      </div>
-                    </div>
-                    
-                    <div className="text-right">
-                      <Badge variant={status.variant}>
-                        {status.label}
-                      </Badge>
-                      {customer.lastActiveDate && (
-                        <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                          {format(new Date(customer.lastActiveDate), 'MMM d, yyyy')}
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{customer.name}</p>
+                            <p className="truncate text-xs text-muted-foreground md:hidden">
+                              {customer.email}
+                            </p>
+                          </div>
                         </div>
-                      )}
-                    </div>
-                    
-                    <Button variant="ghost" size="sm">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+                      </TableCell>
+                      <TableCell className="hidden md:table-cell">
+                        <div className="space-y-0.5 text-sm text-muted-foreground">
+                          <p className="flex items-center gap-1.5">
+                            <Mail className="h-3.5 w-3.5" />
+                            {customer.email}
+                          </p>
+                          {customer.phone && (
+                            <p className="flex items-center gap-1.5">
+                              <Phone className="h-3.5 w-3.5" />
+                              {customer.phone}
+                            </p>
+                          )}
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <p className="font-semibold">
+                          ${customer.totalSpend.toLocaleString()}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {customer._count?.orders ?? 0} orders
+                        </p>
+                      </TableCell>
+                      <TableCell className="hidden text-right sm:table-cell">
+                        {customer.visits.toLocaleString()}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Badge variant={status.variant} className="capitalize">
+                          {status.label}
+                        </Badge>
+                        {customer.lastActiveDate && (
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {format(new Date(customer.lastActiveDate), 'MMM d, yyyy')}
+                          </p>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          )}
 
           {/* Pagination */}
           {pagination && pagination.pages > 1 && (
-            <div className="flex items-center justify-between mt-6">
-              <div className="text-sm text-gray-700 dark:text-gray-300">
-                Showing {((pagination.page - 1) * pagination.limit) + 1} to{' '}
+            <div className="mt-6 flex flex-col items-center justify-between gap-3 sm:flex-row">
+              <div className="text-sm text-muted-foreground">
+                Showing {(pagination.page - 1) * pagination.limit + 1}–
                 {Math.min(pagination.page * pagination.limit, pagination.total)} of{' '}
                 {pagination.total} results
               </div>
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   onClick={() => setPage(page - 1)}
                   disabled={page === 1}
                 >
+                  <ChevronLeft className="mr-1 h-4 w-4" />
                   Previous
                 </Button>
-                <span className="text-sm text-gray-700 dark:text-gray-300">
+                <span className="text-sm text-muted-foreground">
                   Page {page} of {pagination.pages}
                 </span>
                 <Button
@@ -334,6 +306,7 @@ export default function CustomersPage() {
                   disabled={page === pagination.pages}
                 >
                   Next
+                  <ChevronRight className="ml-1 h-4 w-4" />
                 </Button>
               </div>
             </div>
@@ -343,4 +316,3 @@ export default function CustomersPage() {
     </div>
   )
 }
-
